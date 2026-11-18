@@ -1,0 +1,60 @@
+name: Abholung checker
+
+on:
+  schedule:
+    # Starts a run every 30 min; each run watches for ~55 min.
+    # Runs queue behind each other, so checking is close to continuous.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = send test message + one check, watch = normal run"
+        type: choice
+        options: [test, watch]
+        default: test
+
+concurrency:
+  group: abholung
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+      WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
+      STATE_FILE: state.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests beautifulsoup4
+
+      # Remember which dates were already sent, so you are not re-notified every run
+      - uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: abholung-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: abholung-state-
+
+      - name: Test run
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'test'
+        run: |
+          python abholung_bot.py --test-notify
+          python abholung_bot.py --once
+
+      - name: Watch for ~55 minutes
+        if: github.event_name == 'schedule' || inputs.mode == 'watch'
+        run: python abholung_bot.py --max-runtime 55
+
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('state.json') != ''
+        with:
+          path: state.json
+          key: abholung-state-${{ github.run_id }}-${{ github.run_attempt }}
