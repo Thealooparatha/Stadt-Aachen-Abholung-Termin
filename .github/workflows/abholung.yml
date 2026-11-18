@@ -28,7 +28,7 @@ jobs:
       WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
       STATE_FILE: state.json
       # Only alert for appointments on or before this date (YYYY-MM-DD). Change as needed.
-      UNTIL: "2026-12-01"
+      UNTIL: "2026-12-10"
       # "false" = message only when a NEW date appears; "true" = message every ~5 min while any exist
       REPEAT: "false"
       # Seconds between checks (minimum 60)
