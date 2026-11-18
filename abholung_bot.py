@@ -209,10 +209,15 @@ def fmt(dates):
 # --------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(description="Aachen eAT Abholung appointment checker")
-    p.add_argument("--interval", type=int, default=300,
-                   help="seconds between checks (default 300; please keep >= 120)")
+    p.add_argument("--interval", type=int, default=int(os.getenv("INTERVAL") or 300),
+                   help="seconds between checks (default 300, minimum 60)")
     p.add_argument("--max-days", type=int, default=0,
                    help="only alert for slots within N days from today (0 = any)")
+    p.add_argument("--until", default=os.getenv("UNTIL"),
+                   help="only alert for slots on or before this date, YYYY-MM-DD")
+    p.add_argument("--repeat", action="store_true",
+                   default=os.getenv("REPEAT", "").lower() in ("1", "true", "yes"),
+                   help="message on every check while slots exist, not only for new dates")
     p.add_argument("--keyword", default="Abholung",
                    help="text of the service section heading to look for")
     p.add_argument("--option-index", type=int, default=0,
@@ -237,7 +242,8 @@ def main():
         notify(args, "Test: Abholung bot", "Notifications work. Book here:\n" + START_URL)
         return
 
-    interval = max(args.interval, 120)
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    interval = max(args.interval, 60)
     deadline = time.time() + args.max_runtime * 60 if args.max_runtime else None
     state = load_state(args.state_file)
     seen = state["seen"]   # dates already reported, so you are not spammed
@@ -256,20 +262,23 @@ def main():
             if args.max_days:
                 limit = dt.date.today() + dt.timedelta(days=args.max_days)
                 dates = [d for d in dates if d <= limit]
+            if until:
+                dates = [d for d in dates if d <= until]
 
             if dates:
                 new = [d for d in dates if d not in seen]
-                if new:
+                if new or args.repeat:
                     notify(
                         args,
                         "Abholung appointment available!",
-                        f"{label}\nNew dates:\n{fmt(new)}\n\nBook now: {START_URL}",
+                        f"{label}\n{'New dates' if new else 'Available dates'}:\n"
+                        f"{fmt(new or dates)}\n\nBook now: {START_URL}",
                     )
                 else:
                     print(f"[{now()}] Still available (already notified): {fmt(dates).replace(chr(10), ', ')}")
                 seen = set(dates)  # forget dates that disappeared, so they alert again if they return
             else:
-                print(f"[{now()}] No free slot ({label}).")
+                print(f"[{now()}] No free slot{f' up to {until:%d.%m.%Y}' if until else ''} ({label}).")
                 seen = set()
 
         except SiteChanged as e:
@@ -294,7 +303,7 @@ def main():
 
         # Jitter + back off on repeated network errors, to stay polite to the server
         wait = interval * min(2 ** max(fail_streak - 1, 0), 6) if fail_streak else interval
-        wait += random.uniform(0, 60)
+        wait += random.uniform(0, max(10, interval * 0.2))
         if deadline and time.time() + wait > deadline:
             print(f"[{now()}] Max runtime reached, exiting.")
             break
